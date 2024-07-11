@@ -94,7 +94,7 @@ class QReader:
         :return: str|None. The decoded content of the QR code or None if it can not be read.
         """
         # Crop the image if a bounding box is given
-        decodedQR = self._decode_qr_zbar(image=image, detection_result=detection_result)
+        decodedQR,corrected_perspective = self._decode_qr_zbar(image=image, detection_result=detection_result)
         if len(decodedQR) > 0:
             decoded_str = decodedQR[0].data.decode('utf-8')
             for encoding in self.reencode_to:
@@ -108,8 +108,8 @@ class QReader:
                     # When double decoding fails, just return the first decoded string with utf-8
                     warn(f'Double decoding failed for {self.reencode_to}. Returning utf-8 decoded string.')
 
-            return decoded_str
-        return None
+            return decoded_str,corrected_perspective
+        return None,corrected_perspective
 
     def detect_and_decode(self, image: np.ndarray, return_detections: bool = False, is_bgr: bool = False) -> \
             tuple[dict[str, np.ndarray | float | tuple[float | int, float | int]], str | None] | tuple[str | None, ...]:
@@ -189,7 +189,6 @@ class QReader:
         cropped_quad, updated_detection = crop_qr(image=image, detection=detection_result, crop_key=PADDED_QUAD_XY)
         corrected_perspective = self.__correct_perspective(image=cropped_quad,
                                                            padded_quad_xy=updated_detection[PADDED_QUAD_XY])
-
         for scale_factor in (1, 0.5, 2, 0.25, 3, 4):
             for image in (cropped_bbox, corrected_perspective):
                 # If rescaled_image will be larger than 1024px, skip it
@@ -201,11 +200,11 @@ class QReader:
                                             interpolation=cv2.INTER_CUBIC)
                 decodedQR = decodeQR(image=rescaled_image, symbols=[ZBarSymbol.QRCODE])
                 if len(decodedQR) > 0:
-                    return decodedQR
+                    return decodedQR,corrected_perspective
                 # For QRs with black background and white foreground, try to invert the image
                 decodedQR = decodeQR(image=255 - rescaled_image, symbols=[ZBarSymbol.QRCODE])
                 if len(decodedQR) > 0:
-                    return decodedQR
+                    return decodedQR,corrected_perspective
 
                 # If it not works, try to parse to grayscale (if it is not already)
                 if len(rescaled_image.shape) == 3:
@@ -216,7 +215,7 @@ class QReader:
                     gray = rescaled_image
                 decodedQR = self.__threshold_and_blur_decodings(image=gray, blur_kernel_sizes=((5, 5), (7, 7)))
                 if len(decodedQR) > 0:
-                    return decodedQR
+                    return decodedQR,corrected_perspective
 
                 if len(rescaled_image.shape) == 3:
                     # If it not works, try to sharpen the image
@@ -226,9 +225,9 @@ class QReader:
                     sharpened_gray = cv2.filter2D(src=rescaled_image, ddepth=-1, kernel=_SHARPEN_KERNEL)
                 decodedQR = self.__threshold_and_blur_decodings(image=sharpened_gray, blur_kernel_sizes=((3, 3),))
                 if len(decodedQR) > 0:
-                    return decodedQR
+                    return decodedQR,corrected_perspective
 
-        return []
+        return [],None
 
     def __correct_perspective(self, image: np.ndarray, padded_quad_xy: np.ndarray) -> np.ndarray:
         """
